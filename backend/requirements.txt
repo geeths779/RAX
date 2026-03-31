@@ -1,0 +1,32 @@
+# ─── Core Framework ───────────────────────────────────────────────────────────
+fastapi==0.115.*
+uvicorn[standard]==0.34.*
+pydantic-settings==2.9.*
+python-dotenv==1.1.*
+python-multipart==0.0.*
+
+# ─── Database (Supabase Postgres) ─────────────────────────────────────────────
+sqlalchemy[asyncio]==2.0.*
+asyncpg==0.30.*
+alembic==1.15.*
+supabase==2.15.*
+
+# ─── Auth ─────────────────────────────────────────────────────────────────────
+python-jose[cryptography]==3.4.*
+passlib[bcrypt]==1.7.*
+
+# ─── AI / LLM ────────────────────────────────────────────────────────────────
+google-generativeai==0.8.*
+
+# ─── Neo4j (Knowledge Graph) ─────────────────────────────────────────────────
+neo4j==5.28.*
+
+# ─── Qdrant (Vector DB) ──────────────────────────────────────────────────────
+qdrant-client==1.13.*
+
+# ─── Resume Parsing ──────────────────────────────────────────────────────────
+pypdf2==3.0.*
+python-docx==1.1.*
+
+# ─── WebSocket (included in FastAPI/uvicorn, listed for clarity) ──────────────
+websockets==14.2.*
