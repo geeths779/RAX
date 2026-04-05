@@ -28,6 +28,9 @@ dist/
 # Uploads / data
 backend/uploads/
 *.pdf
+
+# Persona plans (individual — not shared via git)
+
 *.docx
 
 # OS
@@ -42,3 +45,5 @@ Thumbs.db
 
 # Alembic
 *.pyc
+
+
