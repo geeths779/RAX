@@ -6,6 +6,8 @@ import asyncio
 import logging
 from typing import Any, Callable, Coroutine
 
+from neo4j import AsyncDriver
+
 from app.agents.pipeline_context import PipelineContext
 from app.agents.resume_parser_agent import ResumeParserAgent
 from app.agents.bias_filter_agent import BiasFilterAgent
@@ -29,11 +31,15 @@ class PipelineOrchestrator:
         ctx = await orchestrator.run(resume_id="...", job_id="...", raw_text="...")
     """
 
-    def __init__(self, on_status_change: StatusCallback | None = None):
+    def __init__(
+        self,
+        on_status_change: StatusCallback | None = None,
+        neo4j_driver: AsyncDriver | None = None,
+    ):
         self._on_status = on_status_change
         self._parser = ResumeParserAgent()
         self._bias_filter = BiasFilterAgent()
-        self._graph_ingestion = GraphIngestionAgent()
+        self._graph_ingestion = GraphIngestionAgent(driver=neo4j_driver)
         self._embedding = EmbeddingAgent()
         self._hybrid_matching = HybridMatchingAgent()
         self._scoring = ScoringAgent()
@@ -50,11 +56,19 @@ class PipelineOrchestrator:
         self,
         resume_id: str,
         job_id: str,
-        raw_text: str,
+        raw_text: str = "",
+        file_bytes: bytes = b"",
+        filename: str = "",
     ) -> PipelineContext:
         """Execute the full pipeline: Parse → Filter → [Graph ║ Embed] → Match → Score."""
 
-        ctx = PipelineContext(resume_id=resume_id, job_id=job_id, raw_text=raw_text)
+        ctx = PipelineContext(
+            resume_id=resume_id,
+            job_id=job_id,
+            raw_text=raw_text,
+            file_bytes=file_bytes,
+            filename=filename,
+        )
 
         # Stage 1: Parse
         await self._notify(resume_id, "parsing", "in_progress")

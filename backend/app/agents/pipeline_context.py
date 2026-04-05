@@ -17,6 +17,10 @@ class PipelineContext:
     resume_id: str = ""
     job_id: str = ""
 
+    # ── Input: raw file bytes (PDF/DOCX) for text extraction ──
+    file_bytes: bytes = b""
+    filename: str = ""
+
     # ── Stage 1: ResumeParserAgent output ──
     raw_text: str = ""
     parsed_resume: dict[str, Any] = field(default_factory=dict)
