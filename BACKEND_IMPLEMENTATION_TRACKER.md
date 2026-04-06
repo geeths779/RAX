@@ -15,10 +15,10 @@
 | 2     | SQLAlchemy Models              | COMPLETED   | 2026-04-05   |
 | 3     | Alembic Migrations             | COMPLETED   | 2026-04-05   |
 | 4     | Pydantic Schemas               | COMPLETED   | 2026-04-05   |
-| 5     | Authentication (JWT)           | NOT STARTED | —            |
-| 6     | CRUD API Routes                | NOT STARTED | —            |
-| 7     | Router Registration & Lifespan | NOT STARTED | —            |
-| 8     | Tests                          | NOT STARTED | —            |
+| 5     | Authentication (JWT)           | COMPLETED   | 2026-04-06   |
+| 6     | CRUD API Routes                | COMPLETED   | 2026-04-06   |
+| 7     | Router Registration & Lifespan | COMPLETED   | 2026-04-06   |
+| 8     | Tests                          | COMPLETED   | 2026-04-06   |
 
 ---
 
@@ -58,18 +58,18 @@ Person 3 consumes these REST APIs. Track availability here:
 
 | Endpoint                                  | Method | Route File       | Status      |
 |-------------------------------------------|--------|------------------|-------------|
-| `POST /api/auth/register`                 | POST   | `routes/auth.py` | NOT STARTED |
-| `POST /api/auth/login`                    | POST   | `routes/auth.py` | NOT STARTED |
-| `GET /api/jobs`                           | GET    | `routes/jobs.py` | NOT STARTED |
-| `POST /api/jobs`                          | POST   | `routes/jobs.py` | NOT STARTED |
-| `GET /api/jobs/{id}`                      | GET    | `routes/jobs.py` | NOT STARTED |
-| `PUT /api/jobs/{id}`                      | PUT    | `routes/jobs.py` | NOT STARTED |
-| `POST /api/resumes/upload`               | POST   | `routes/resumes.py` | NOT STARTED |
-| `GET /api/resumes/{id}/status`           | GET    | `routes/resumes.py` | NOT STARTED |
-| `GET /api/jobs/{job_id}/candidates`      | GET    | `routes/candidates.py` | NOT STARTED |
-| `GET /api/resumes/{resume_id}/analysis`  | GET    | `routes/analysis.py` | NOT STARTED |
-| `POST /api/feedback/{candidate_id}/{job_id}` | POST | `routes/feedback.py` | NOT STARTED |
-| `GET /api/feedback/{id}`                 | GET    | `routes/feedback.py` | NOT STARTED |
+| `POST /api/auth/register`                 | POST   | `routes/auth.py` | AVAILABLE |
+| `POST /api/auth/login`                    | POST   | `routes/auth.py` | AVAILABLE |
+| `GET /api/jobs`                           | GET    | `routes/jobs.py` | AVAILABLE |
+| `POST /api/jobs`                          | POST   | `routes/jobs.py` | AVAILABLE |
+| `GET /api/jobs/{id}`                      | GET    | `routes/jobs.py` | AVAILABLE |
+| `PUT /api/jobs/{id}`                      | PUT    | `routes/jobs.py` | AVAILABLE |
+| `POST /api/resumes/upload`               | POST   | `routes/resumes.py` | AVAILABLE |
+| `GET /api/resumes/{id}/status`           | GET    | `routes/resumes.py` | AVAILABLE |
+| `GET /api/jobs/{job_id}/candidates`      | GET    | `routes/candidates.py` | AVAILABLE |
+| `GET /api/resumes/{resume_id}/analysis`  | GET    | `routes/analysis.py` | AVAILABLE |
+| `POST /api/feedback/{candidate_id}/{job_id}` | POST | `routes/feedback.py` | AVAILABLE |
+| `GET /api/feedback/{id}`                 | GET    | `routes/feedback.py` | AVAILABLE |
 
 ### JWT Token Format (for Person 3)
 
@@ -472,14 +472,14 @@ backend/app/api/
 
 | # | Requirement | Done? |
 |---|-------------|-------|
-| 5.1 | Password hashing with `passlib[bcrypt]` (never store plaintext) | ☐ |
-| 5.2 | JWT encode with `python-jose` using `SECRET_KEY` from config | ☐ |
-| 5.3 | Token expiry: `ACCESS_TOKEN_EXPIRE_MINUTES` from config | ☐ |
-| 5.4 | `get_current_user` dependency works with `Authorization: Bearer <token>` | ☐ |
-| 5.5 | `require_role` blocks unauthorized roles with 403 | ☐ |
-| 5.6 | Register rejects duplicate emails with 400 | ☐ |
-| 5.7 | Login returns 401 for wrong email/password | ☐ |
-| 5.8 | No sensitive data in JWT payload (no password, no email) | ☐ |
+| 5.1 | Password hashing with `passlib[bcrypt]` (never store plaintext) | ☑ |
+| 5.2 | JWT encode with `python-jose` using `SECRET_KEY` from config | ☑ |
+| 5.3 | Token expiry: `ACCESS_TOKEN_EXPIRE_MINUTES` from config | ☑ |
+| 5.4 | `get_current_user` dependency works with `Authorization: Bearer <token>` | ☑ |
+| 5.5 | `require_role` blocks unauthorized roles with 403 | ☑ |
+| 5.6 | Register rejects duplicate emails with 400 | ☑ |
+| 5.7 | Login returns 401 for wrong email/password | ☑ |
+| 5.8 | No sensitive data in JWT payload (no password, no email) | ☑ |
 
 ### Validation Criteria
 
@@ -490,11 +490,11 @@ backend/app/api/
 
 ### Phase 5 Checkpoint
 
-> **Status:** NOT STARTED  
-> **Date Completed:** —  
-> **Issues/Blockers:** —  
+> **Status:** COMPLETED  
+> **Date Completed:** 2026-04-06  
+> **Issues/Blockers:** None. Note: bcrypt 4.x required (5.x incompatible with passlib 1.7.x).  
 > **Notes for Person 2:** No direct impact. If agents need to know who triggered a pipeline, the `user_id` comes from the route layer, not auth directly.  
-> **Notes for Person 3:** You can now build login/register UI. Token format: `{ access_token: "...", token_type: "bearer" }`. Send as `Authorization: Bearer <token>` header on all subsequent requests.
+> **Notes for Person 3:** Login/register endpoints live. Token format: `{ access_token: "...", token_type: "bearer" }`. Send as `Authorization: Bearer <token>` header on all subsequent requests.
 
 ---
 
@@ -599,17 +599,17 @@ except Exception as e:
 
 | # | Requirement | Done? |
 |---|-------------|-------|
-| 6.1 | `POST /jobs` creates job and triggers agents (non-blocking) | ☐ |
-| 6.2 | `POST /resumes/upload` accepts multipart, validates file type | ☐ |
-| 6.3 | Resume upload stores file in Supabase Storage | ☐ |
-| 6.4 | Resume upload triggers pipeline as `BackgroundTask` | ☐ |
-| 6.5 | `GET /jobs/{job_id}/candidates` returns ranked list by score | ☐ |
-| 6.6 | `GET /resumes/{resume_id}/analysis` returns full breakdown | ☐ |
-| 6.7 | `POST /feedback` triggers FeedbackAgent and persists result | ☐ |
-| 6.8 | All routes require authentication | ☐ |
-| 6.9 | Agent calls wrapped in try/except (don't crash if agent fails) | ☐ |
-| 6.10 | File type validation (only .pdf, .docx) | ☐ |
-| 6.11 | Proper HTTP status codes: 201 (create), 404 (not found), 400 (bad request) | ☐ |
+| 6.1 | `POST /jobs` creates job and triggers agents (non-blocking) | ☑ |
+| 6.2 | `POST /resumes/upload` accepts multipart, validates file type | ☑ |
+| 6.3 | Resume upload stores file in Supabase Storage | ☑ |
+| 6.4 | Resume upload triggers pipeline as `BackgroundTask` | ☑ |
+| 6.5 | `GET /jobs/{job_id}/candidates` returns ranked list by score | ☑ |
+| 6.6 | `GET /resumes/{resume_id}/analysis` returns full breakdown | ☑ |
+| 6.7 | `POST /feedback` triggers FeedbackAgent and persists result | ☑ |
+| 6.8 | All routes require authentication | ☑ |
+| 6.9 | Agent calls wrapped in try/except (don't crash if agent fails) | ☑ |
+| 6.10 | File type validation (only .pdf, .docx) | ☑ |
+| 6.11 | Proper HTTP status codes: 201 (create), 404 (not found), 400 (bad request) | ☑ |
 
 ### Validation Criteria
 
@@ -621,9 +621,9 @@ except Exception as e:
 
 ### Phase 6 Checkpoint
 
-> **Status:** NOT STARTED  
-> **Date Completed:** —  
-> **Issues/Blockers:** —  
+> **Status:** COMPLETED  
+> **Date Completed:** 2026-04-06  
+> **Issues/Blockers:** None.  
 > **Notes for Person 2:** Your agents are now called from routes. `PipelineOrchestrator.run()` is triggered as a `BackgroundTask` on resume upload. `GraphIngestionAgent.ingest_job()` + `EmbeddingAgent.embed_job()` called on job creation. All wrapped in try/except so stubs won't crash the API.  
 > **Notes for Person 3:** All REST endpoints are now available. You can build the full UI. Check `/docs` for request/response shapes.
 
@@ -679,11 +679,11 @@ async def lifespan(app: FastAPI):
 
 | # | Requirement | Done? |
 |---|-------------|-------|
-| 7.1 | All 6 routers registered with correct prefixes | ☐ |
-| 7.2 | Lifespan startup: init DB engine, Neo4j driver, Qdrant client | ☐ |
-| 7.3 | Lifespan shutdown: close DB engine, Neo4j driver | ☐ |
-| 7.4 | `/health` endpoint still works | ☐ |
-| 7.5 | Person 2's existing code not broken | ☐ |
+| 7.1 | All 6 routers registered with correct prefixes | ☑ |
+| 7.2 | Lifespan startup: init DB engine, Neo4j driver, Qdrant client | ☑ |
+| 7.3 | Lifespan shutdown: close DB engine, Neo4j driver | ☑ |
+| 7.4 | `/health` endpoint still works | ☑ |
+| 7.5 | Person 2's existing code not broken | ☑ |
 
 ### Validation Criteria
 
@@ -694,9 +694,9 @@ async def lifespan(app: FastAPI):
 
 ### Phase 7 Checkpoint
 
-> **Status:** NOT STARTED  
-> **Date Completed:** —  
-> **Issues/Blockers:** —  
+> **Status:** COMPLETED  
+> **Date Completed:** 2026-04-06  
+> **Issues/Blockers:** None. Startup init wrapped in try/except to avoid crashing when external services unavailable.  
 > **Notes for Person 2:** `main.py` now initializes Neo4j driver and Qdrant client at startup. You can access them via `get_neo4j_driver()` and `get_qdrant_client()` from `app.db`.  
 > **Notes for Person 3:** Backend is fully running. All endpoints visible at `/docs`. You can start full integration.
 
@@ -744,15 +744,15 @@ backend/tests/
 
 | # | Requirement | Done? |
 |---|-------------|-------|
-| 8.1 | `conftest.py`: async test DB with auto-cleanup | ☐ |
-| 8.2 | `conftest.py`: httpx AsyncClient with dependency overrides | ☐ |
-| 8.3 | Agent calls mocked (don't need real Gemini/Neo4j/Qdrant in tests) | ☐ |
-| 8.4 | Auth tests: register, login, token, role guard | ☐ |
-| 8.5 | Jobs tests: full CRUD cycle | ☐ |
-| 8.6 | Resumes tests: upload + status check | ☐ |
-| 8.7 | Candidates tests: ranked query | ☐ |
-| 8.8 | Feedback tests: generation + retrieval | ☐ |
-| 8.9 | All tests pass with `pytest backend/tests/ -v` | ☐ |
+| 8.1 | `conftest.py`: async test DB with auto-cleanup | ☑ |
+| 8.2 | `conftest.py`: httpx AsyncClient with dependency overrides | ☑ |
+| 8.3 | Agent calls mocked (don't need real Gemini/Neo4j/Qdrant in tests) | ☑ |
+| 8.4 | Auth tests: register, login, token, role guard | ☑ |
+| 8.5 | Jobs tests: full CRUD cycle | ☑ |
+| 8.6 | Resumes tests: upload + status check | ☑ |
+| 8.7 | Candidates tests: ranked query | ☑ |
+| 8.8 | Feedback tests: generation + retrieval | ☑ |
+| 8.9 | All tests pass with `pytest backend/tests/ -v` | ☑ |
 
 ### Validation Criteria
 
@@ -762,9 +762,9 @@ backend/tests/
 
 ### Phase 8 Checkpoint
 
-> **Status:** NOT STARTED  
-> **Date Completed:** —  
-> **Issues/Blockers:** —  
+> **Status:** COMPLETED  
+> **Date Completed:** 2026-04-06  
+> **Issues/Blockers:** None. 25 tests pass. SQLite used via JSONB→JSON compilation hook. No external services required.  
 > **Notes for Person 2:** Tests mock your agents. When your agents are ready, we can add integration tests that use real agents.  
 > **Notes for Person 3:** Backend is fully tested. You can rely on the API contract.
 
@@ -780,6 +780,10 @@ backend/tests/
 | 2026-04-05 | 2 | Created 6 SQLAlchemy models + enums.py | `Resume`, `Analysis`, `Feedback` models available for pipeline DB writes; `PipelineStatus` enum for status updates | No impact |
 | 2026-04-05 | 3 | Alembic init + initial migration (rev `4c24c57b118b`) | Tables will exist after `alembic upgrade head` | No impact |
 | 2026-04-05 | 4 | Created 14 Pydantic schemas across 6 files; added `email-validator` dep | No impact | Review `*Response` schemas for TypeScript types |
+| 2026-04-06 | 5 | Auth: `POST /auth/register`, `POST /auth/login`, `get_current_user`, `require_role` | No direct impact | Login/register endpoints available; send `Authorization: Bearer <token>` |
+| 2026-04-06 | 6 | CRUD routes: jobs, resumes, candidates, analysis, feedback | Agents called from routes (try/except wrapped) | All 12 REST endpoints available |
+| 2026-04-06 | 7 | Routers wired into `main.py`; lifespan init/shutdown for Neo4j, Qdrant, Supabase | Neo4j/Qdrant init at startup | `/docs` shows all endpoints; full integration ready |
+| 2026-04-06 | 8 | 25 tests: auth, jobs, resumes, candidates, feedback; SQLite in-memory | Agent calls are mocked | Backend fully tested; API contract reliable |
 
 ---
 
