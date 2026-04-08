@@ -7,6 +7,7 @@ import logging
 from typing import Any, Callable, Coroutine
 
 from neo4j import AsyncDriver
+from qdrant_client import QdrantClient
 
 from app.agents.pipeline_context import PipelineContext
 from app.agents.resume_parser_agent import ResumeParserAgent
@@ -35,12 +36,13 @@ class PipelineOrchestrator:
         self,
         on_status_change: StatusCallback | None = None,
         neo4j_driver: AsyncDriver | None = None,
+        qdrant_client: QdrantClient | None = None,
     ):
         self._on_status = on_status_change
         self._parser = ResumeParserAgent()
         self._bias_filter = BiasFilterAgent()
         self._graph_ingestion = GraphIngestionAgent(driver=neo4j_driver)
-        self._embedding = EmbeddingAgent()
+        self._embedding = EmbeddingAgent(qdrant_client=qdrant_client)
         self._hybrid_matching = HybridMatchingAgent()
         self._scoring = ScoringAgent()
 

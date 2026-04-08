@@ -62,7 +62,7 @@
 | 1 | ✅ Complete | ✅ Done | All skeletons, `config.py`, `base_agent.py`, `pipeline_context.py` | — |
 | 2 | ✅ Complete | ✅ Done | PDF/DOCX extraction (`_extract_text`), `PipelineContext.file_bytes`/`filename`, orchestrator updated | — |
 | 3 | ✅ Complete | ✅ Done | Neo4j execution in managed transactions, resume ingestion, job ingestion, idempotent MERGE | Needs Docker/Neo4j running for integration tests |
-| 4 | ❌ Not started | ❌ Skeleton | `embed_text()` ready in `BaseAgent`, collection names + vector dim defined | Qdrant client init, collection management, upsert logic |
+| 4 | ✅ Complete | ✅ Done | Qdrant collection mgmt, `_build_resume_text`, `_ensure_collection`, resume/JD upsert, deterministic UUIDs | Gemini API key needed for real embeddings (mock used in tests) |
 | 5 | ❌ Not started | ⚠️ 50% | `ScoringAgent` Gemini call works, `HybridMatchingAgent` has Cypher templates + weights | All graph/vector query execution, score computation, fusion logic |
 | 6 | ❌ Not started | ⚠️ 75% | `Orchestrator` fully wired, `FeedbackAgent` Gemini call works | DB persistence stub, feedback stage in orchestrator |
 | 7 | ❌ Not started | ❌ Nothing | `StatusCallback` type alias exists in orchestrator | `ws.py` file, `ConnectionManager`, WS route, main.py registration |
