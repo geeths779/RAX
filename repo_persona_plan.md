@@ -87,7 +87,7 @@
 | 1 | ✅ Complete | Foundation scaffold |
 | 2 | ✅ Complete | PDF/DOCX extraction via PyPDF2 + python-docx; `PipelineContext` has `file_bytes`/`filename` |
 | 3 | ✅ Complete | Neo4j Cypher execution in transactions; resume + job ingestion; idempotent via MERGE |
-| 4 | Not started | |
+| 4 | ✅ Complete | Qdrant collection management, resume/JD embedding via Gemini, upsert with deterministic UUIDs |
 | 5 | Not started | |
 | 6 | Not started | |
 | 7 | Not started | |
