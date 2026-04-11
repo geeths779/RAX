@@ -20,8 +20,14 @@ export default function RegisterPage() {
       await registerFn(email, password, fullName, role);
       navigate('/app/dashboard');
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      setError(msg || 'Registration failed');
+      const resp = (err as { response?: { data?: { detail?: string | Array<{ msg?: string; loc?: string[] }> } } })?.response?.data;
+      let msg = 'Registration failed';
+      if (typeof resp?.detail === 'string') {
+        msg = resp.detail;
+      } else if (Array.isArray(resp?.detail) && resp.detail.length > 0) {
+        msg = resp.detail.map((e) => e.msg || String(e)).join('; ');
+      }
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -77,7 +83,7 @@ export default function RegisterPage() {
             <input
               type="password"
               required
-              minLength={6}
+              minLength={8}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"

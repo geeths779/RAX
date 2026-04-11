@@ -18,8 +18,14 @@ export default function LoginPage() {
       await login(email, password);
       navigate('/app/dashboard');
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      setError(msg || 'Login failed');
+      const resp = (err as { response?: { data?: { detail?: string | Array<{ msg?: string; loc?: string[] }> } } })?.response?.data;
+      let msg = 'Login failed';
+      if (typeof resp?.detail === 'string') {
+        msg = resp.detail;
+      } else if (Array.isArray(resp?.detail) && resp.detail.length > 0) {
+        msg = resp.detail.map((e) => e.msg || String(e)).join('; ');
+      }
+      setError(msg);
     } finally {
       setLoading(false);
     }
