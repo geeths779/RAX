@@ -25,9 +25,18 @@ export function useProcessingStream(jobId: string | null): UseProcessingStreamRe
     if (!jobId) return;
 
     const token = localStorage.getItem('rax_token') || '';
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.host;
-    const url = `${protocol}//${host}/ws/pipeline/${jobId}?token=${token}`;
+    const apiUrl = import.meta.env.VITE_API_URL;
+    let url: string;
+    if (apiUrl) {
+      // Production: connect WS to the backend host
+      const wsBase = apiUrl.replace(/^http/, 'ws');
+      url = `${wsBase}/ws/pipeline/${jobId}?token=${token}`;
+    } else {
+      // Dev: same host via Vite proxy
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const host = window.location.host;
+      url = `${protocol}//${host}/ws/pipeline/${jobId}?token=${token}`;
+    }
 
     const ws = new WebSocket(url);
     wsRef.current = ws;
