@@ -45,15 +45,19 @@ class FeedbackAgent(BaseAgent):
         #   2. Call Gemini with FEEDBACK_PROMPT
         #   3. Persist to feedback table via SQLAlchemy session
 
-        llm = self.get_llm()
         prompt = FEEDBACK_PROMPT.format(
             matched_skills=json.dumps(ctx.match_result.get("matched_skills", [])),
             skill_gaps=json.dumps(ctx.match_result.get("skill_gaps", [])),
             similar_skills=json.dumps(ctx.match_result.get("similar_skills", [])),
             explanation=ctx.analysis.get("explanation", ""),
         )
-        response = await llm.generate_content_async(prompt)
-        feedback_text = response.text.strip()
+
+        try:
+            feedback_text = await self.call_llm(prompt)
+        except RuntimeError as exc:
+            logger.error("FeedbackAgent: Gemini call failed: %s", exc)
+            ctx.error = str(exc)
+            return ctx
 
         # Store in ctx for caller to persist
         ctx.analysis["feedback"] = feedback_text

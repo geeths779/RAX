@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 from typing import Any, Callable, Coroutine
 
@@ -11,6 +12,7 @@ from qdrant_client import QdrantClient
 
 from app.agents.pipeline_context import PipelineContext
 from app.agents.resume_parser_agent import ResumeParserAgent
+from app.agents.experience_extractor import ExperienceExtractorAgent
 from app.agents.bias_filter_agent import BiasFilterAgent
 from app.agents.graph_ingestion_agent import GraphIngestionAgent
 from app.agents.embedding_agent import EmbeddingAgent
@@ -40,10 +42,14 @@ class PipelineOrchestrator:
     ):
         self._on_status = on_status_change
         self._parser = ResumeParserAgent()
+        self._experience_extractor = ExperienceExtractorAgent()
         self._bias_filter = BiasFilterAgent()
         self._graph_ingestion = GraphIngestionAgent(driver=neo4j_driver)
         self._embedding = EmbeddingAgent(qdrant_client=qdrant_client)
-        self._hybrid_matching = HybridMatchingAgent()
+        self._hybrid_matching = HybridMatchingAgent(
+            neo4j_driver=neo4j_driver,
+            qdrant_client=qdrant_client,
+        )
         self._scoring = ScoringAgent()
 
     async def _notify(self, resume_id: str, stage: str, status: str) -> None:
@@ -72,6 +78,23 @@ class PipelineOrchestrator:
             filename=filename,
         )
 
+        # Load job data so scoring has full context
+        try:
+            from app.db.session import async_session_factory
+            from app.models.job import Job
+            from sqlalchemy import select
+            import uuid
+
+            async with async_session_factory() as db:
+                result = await db.execute(select(Job).where(Job.id == uuid.UUID(job_id)))
+                job = result.scalar_one_or_none()
+                if job:
+                    ctx.job_title = job.title or ""
+                    ctx.job_description = job.description or ""
+                    ctx.job_requirements = job.requirements_raw or {}
+        except Exception as exc:
+            logger.warning("Failed to load job data for %s: %s", job_id, exc)
+
         # Stage 1: Parse
         await self._notify(resume_id, "parsing", "in_progress")
         ctx = await self._parser.run(ctx)
@@ -79,6 +102,16 @@ class PipelineOrchestrator:
             await self._notify(resume_id, "parsing", "failed")
             return ctx
         await self._notify(resume_id, "parsing", "complete")
+
+        # Stage 1b: Experience Extraction (LLM judge — non-fatal)
+        try:
+            ctx = await self._experience_extractor.run(ctx)
+            if ctx.enriched_experience:
+                logger.info("ExperienceExtractor: total_years=%.1f seniority=%s",
+                            ctx.enriched_experience.get("total_years_experience", 0),
+                            ctx.enriched_experience.get("seniority_level", "unknown"))
+        except Exception as exc:
+            logger.warning("ExperienceExtractor failed (non-fatal): %s", exc)
 
         # Stage 2: Bias Filter
         await self._notify(resume_id, "filtering", "in_progress")
@@ -88,38 +121,53 @@ class PipelineOrchestrator:
             return ctx
         await self._notify(resume_id, "filtering", "complete")
 
-        # Stage 3a + 3b: Graph Ingestion ║ Embedding (parallel)
+        # Stage 3a + 3b: Graph Ingestion ║ Embedding (parallel, on separate copies)
+        # These are enhancement stages — failures are logged but do NOT block the pipeline.
         await self._notify(resume_id, "graph_ingestion", "in_progress")
         await self._notify(resume_id, "embedding", "in_progress")
 
-        graph_task = asyncio.create_task(self._graph_ingestion.run(ctx))
-        embed_task = asyncio.create_task(self._embedding.run(ctx))
+        graph_ctx = copy.copy(ctx)
+        embed_ctx = copy.copy(ctx)
 
-        graph_ctx, embed_ctx = await asyncio.gather(graph_task, embed_task)
+        graph_task = asyncio.create_task(self._graph_ingestion.run(graph_ctx))
+        embed_task = asyncio.create_task(self._embedding.run(embed_ctx))
 
-        # Merge parallel results back into a single context
-        ctx.graph_node_id = graph_ctx.graph_node_id
-        ctx.qdrant_point_id = embed_ctx.qdrant_point_id
+        results = await asyncio.gather(graph_task, embed_task, return_exceptions=True)
 
-        if graph_ctx.error:
-            ctx.error = graph_ctx.error
+        # Merge parallel results — treat failures as warnings, not fatal errors
+        if isinstance(results[0], BaseException):
+            logger.warning("Graph ingestion crashed: %s", results[0])
             await self._notify(resume_id, "graph_ingestion", "failed")
-            return ctx
-        await self._notify(resume_id, "graph_ingestion", "complete")
+        else:
+            graph_ctx = results[0]
+            ctx.graph_node_id = graph_ctx.graph_node_id
+            if graph_ctx.error:
+                logger.warning("GraphIngestionAgent error (non-fatal): %s", graph_ctx.error)
+                await self._notify(resume_id, "graph_ingestion", "failed")
+            else:
+                await self._notify(resume_id, "graph_ingestion", "complete")
 
-        if embed_ctx.error:
-            ctx.error = embed_ctx.error
+        if isinstance(results[1], BaseException):
+            logger.warning("Embedding crashed: %s", results[1])
             await self._notify(resume_id, "embedding", "failed")
-            return ctx
-        await self._notify(resume_id, "embedding", "complete")
+        else:
+            embed_ctx = results[1]
+            ctx.qdrant_point_id = embed_ctx.qdrant_point_id
+            if embed_ctx.error:
+                logger.warning("EmbeddingAgent error (non-fatal): %s", embed_ctx.error)
+                await self._notify(resume_id, "embedding", "failed")
+            else:
+                await self._notify(resume_id, "embedding", "complete")
 
-        # Stage 4: Hybrid Matching
+        # Stage 4: Hybrid Matching (best-effort — skip if graph/vector data is missing)
         await self._notify(resume_id, "hybrid_matching", "in_progress")
         ctx = await self._hybrid_matching.run(ctx)
         if ctx.error:
+            logger.warning("HybridMatchingAgent error (non-fatal): %s", ctx.error)
             await self._notify(resume_id, "hybrid_matching", "failed")
-            return ctx
-        await self._notify(resume_id, "hybrid_matching", "complete")
+            ctx.error = ""  # Clear so scoring can still proceed
+        else:
+            await self._notify(resume_id, "hybrid_matching", "complete")
 
         # Stage 5: Scoring
         await self._notify(resume_id, "scoring", "in_progress")

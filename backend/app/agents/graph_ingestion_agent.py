@@ -91,7 +91,8 @@ class GraphIngestionAgent(BaseAgent):
             return ctx
 
         if not self._driver:
-            ctx.error = "Neo4j driver not configured"
+            logger.warning("GraphIngestionAgent: Neo4j not configured — skipping graph ingestion")
+            ctx.graph_node_id = ctx.resume_id
             return ctx
 
         try:
@@ -126,10 +127,13 @@ class GraphIngestionAgent(BaseAgent):
 
         # 2. Skills
         for skill in resume.get("skills", []):
+            skill_name = skill.get("name", "").strip()
+            if not skill_name:
+                continue
             await tx.run(
                 LINK_CANDIDATE_SKILL,
                 candidate_id=candidate_id,
-                skill_name=skill.get("name", ""),
+                skill_name=skill_name,
                 years=skill.get("years", 0),
                 proficiency=skill.get("proficiency", ""),
             )

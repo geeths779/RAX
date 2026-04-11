@@ -37,19 +37,18 @@ class BiasFilterAgent(BaseAgent):
             ctx.error = "No parsed resume available for bias filtering"
             return ctx
 
-        llm = self.get_llm()
         prompt = BIAS_FILTER_PROMPT.format(
             resume_json=json.dumps(ctx.parsed_resume, indent=2)
         )
-        response = await llm.generate_content_async(prompt)
 
         try:
-            text = response.text.strip()
-            if text.startswith("```"):
-                text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+            text = await self.call_llm(prompt)
             ctx.filtered_resume = json.loads(text)
         except (json.JSONDecodeError, IndexError) as exc:
             logger.error("BiasFilterAgent: failed to parse response: %s", exc)
             ctx.error = f"Bias filtering failed: {exc}"
+        except RuntimeError as exc:
+            logger.error("BiasFilterAgent: Gemini call failed: %s", exc)
+            ctx.error = str(exc)
 
         return ctx

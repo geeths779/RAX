@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from typing import Any
@@ -61,13 +62,20 @@ class EmbeddingAgent(BaseAgent):
         self._client = qdrant_client
 
     def _ensure_collection(self, collection_name: str) -> None:
-        """Create the Qdrant collection if it doesn't exist."""
-        if not self._client.collection_exists(collection_name):
-            self._client.create_collection(
-                collection_name=collection_name,
-                vectors_config=VectorParams(size=VECTOR_DIM, distance=Distance.COSINE),
-            )
-            logger.info("EmbeddingAgent: created collection '%s'", collection_name)
+        """Create the Qdrant collection if it doesn't exist (sync — call via to_thread)."""
+        try:
+            if not self._client.collection_exists(collection_name):
+                self._client.create_collection(
+                    collection_name=collection_name,
+                    vectors_config=VectorParams(size=VECTOR_DIM, distance=Distance.COSINE),
+                )
+                logger.info("EmbeddingAgent: created collection '%s'", collection_name)
+        except Exception:
+            # Race condition: another worker may have created it between check and create
+            if self._client.collection_exists(collection_name):
+                pass
+            else:
+                raise
 
     async def run(self, ctx: PipelineContext) -> PipelineContext:
         """Embed the filtered resume text and upsert into Qdrant resumes collection."""
@@ -79,7 +87,9 @@ class EmbeddingAgent(BaseAgent):
             return ctx
 
         if not self._client:
-            ctx.error = "Qdrant client not configured"
+            logger.warning("EmbeddingAgent: Qdrant not configured — skipping vector storage")
+            # Still generate embedding ID so pipeline can continue
+            ctx.qdrant_point_id = _resume_id_to_uuid(ctx.resume_id)
             return ctx
 
         try:
@@ -90,19 +100,42 @@ class EmbeddingAgent(BaseAgent):
 
             embedding = await self.embed_text(text)
 
-            self._ensure_collection(RESUMES_COLLECTION)
+            await asyncio.to_thread(self._ensure_collection, RESUMES_COLLECTION)
 
             point_id = _resume_id_to_uuid(ctx.resume_id)
-            self._client.upsert(
+
+            # Build rich payload so semantic queries return useful context
+            skills_list = [
+                {"name": s.get("name", ""), "years": s.get("years", 0), "proficiency": s.get("proficiency", "")}
+                for s in ctx.filtered_resume.get("skills", [])
+            ]
+            experience_list = [
+                {"title": e.get("title", ""), "company": e.get("company", ""), "duration": e.get("duration", ""), "description": e.get("description", "")}
+                for e in ctx.filtered_resume.get("experience", [])
+            ]
+            education_list = [
+                {"degree": e.get("degree", ""), "field": e.get("field", ""), "institution": e.get("institution", ""), "year": e.get("year", "")}
+                for e in ctx.filtered_resume.get("education", [])
+            ]
+
+            payload = {
+                "resume_id": ctx.resume_id,
+                "job_id": ctx.job_id,
+                "resume_text": text,
+                "skills": skills_list,
+                "skill_names": [s.get("name", "") for s in ctx.filtered_resume.get("skills", [])],
+                "experience": experience_list,
+                "education": education_list,
+            }
+
+            await asyncio.to_thread(
+                self._client.upsert,
                 collection_name=RESUMES_COLLECTION,
                 points=[
                     PointStruct(
                         id=point_id,
                         vector=embedding,
-                        payload={
-                            "resume_id": ctx.resume_id,
-                            "job_id": ctx.job_id,
-                        },
+                        payload=payload,
                     )
                 ],
             )
@@ -118,7 +151,7 @@ class EmbeddingAgent(BaseAgent):
 
         return ctx
 
-    async def embed_job(self, job_id: str, description_text: str) -> str:
+    async def embed_job(self, job_id: str, description_text: str, title: str = "", requirements: dict | None = None) -> str:
         """Embed a job description and store in Qdrant. Returns point_id."""
         logger.info("EmbeddingAgent: embedding job %s", job_id)
 
@@ -127,16 +160,27 @@ class EmbeddingAgent(BaseAgent):
 
         embedding = await self.embed_text(description_text)
 
-        self._ensure_collection(JOB_DESCRIPTIONS_COLLECTION)
+        await asyncio.to_thread(self._ensure_collection, JOB_DESCRIPTIONS_COLLECTION)
 
         point_id = _job_id_to_uuid(job_id)
-        self._client.upsert(
+
+        req_skills = []
+        if requirements:
+            req_skills = requirements.get("skills", [])
+
+        await asyncio.to_thread(
+            self._client.upsert,
             collection_name=JOB_DESCRIPTIONS_COLLECTION,
             points=[
                 PointStruct(
                     id=point_id,
                     vector=embedding,
-                    payload={"job_id": job_id},
+                    payload={
+                        "job_id": job_id,
+                        "title": title,
+                        "description": description_text,
+                        "required_skills": req_skills,
+                    },
                 )
             ],
         )
