@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 from app.config import get_settings
 
@@ -11,28 +12,55 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # ── Startup ──
+    # ── Startup: Initialise and verify all external services ──
     from app.db.neo4j_client import init_neo4j_driver
     from app.db.qdrant_client import init_qdrant_client
     from app.db.supabase_client import init_supabase_client
+    from app.db.session import async_engine, _url
 
+    failures: list[str] = []
+
+    # 1. Neo4j
     try:
-        init_neo4j_driver()
+        driver = init_neo4j_driver()
+        await driver.verify_connectivity()
+        logger.info("✔ Neo4j connected")
     except Exception as e:
-        logger.warning("Neo4j driver init skipped: %s", e)
+        failures.append(f"Neo4j: {e}")
 
+    # 2. Qdrant
     try:
-        init_qdrant_client()
+        qc = init_qdrant_client()
+        # get_collections() is called inside init already; if we got here it's alive
+        logger.info("✔ Qdrant connected")
     except Exception as e:
-        logger.warning("Qdrant client init skipped: %s", e)
+        failures.append(f"Qdrant: {e}")
 
+    # 3. Supabase (storage client + Postgres via SQLAlchemy)
     try:
         init_supabase_client()
+        logger.info("✔ Supabase storage client connected")
     except Exception as e:
-        logger.warning("Supabase client init skipped: %s", e)
+        failures.append(f"Supabase storage: {e}")
+
+    try:
+        async with async_engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        logger.info("✔ PostgreSQL connected")
+    except Exception as e:
+        failures.append(f"PostgreSQL: {e}")
+
+    if failures:
+        for f in failures:
+            logger.error("STARTUP CHECK FAILED — %s", f)
+        raise RuntimeError(
+            f"Application startup aborted — {len(failures)} service(s) unavailable:\n"
+            + "\n".join(f"  • {f}" for f in failures)
+        )
+
+    logger.info("All startup checks passed — application ready")
 
     # Auto-create tables when using SQLite (local dev mode)
-    from app.db.session import async_engine, _url
     if "sqlite" in _url:
         from app.db.base import Base
         from app.models import User, Job, Candidate, Resume, Analysis, Feedback  # noqa: F401
