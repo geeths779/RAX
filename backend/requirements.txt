@@ -7,7 +7,7 @@ python-multipart==0.0.*
 
 # ─── Database (Supabase Postgres) ─────────────────────────────────────────────
 sqlalchemy[asyncio]==2.0.*
-asyncpg==0.30.*
+asyncpg==0.31.*
 alembic==1.15.*
 supabase==2.15.*
 
@@ -17,13 +17,13 @@ passlib[bcrypt]==1.7.*
 email-validator>=2.0
 
 # ─── AI / LLM ────────────────────────────────────────────────────────────────
-google-generativeai==0.8.*
+google-genai>=1.72
 
 # ─── Neo4j (Knowledge Graph) ─────────────────────────────────────────────────
 neo4j==5.28.*
 
 # ─── Qdrant (Vector DB) ──────────────────────────────────────────────────────
-qdrant-client==1.13.*
+qdrant-client==1.17.*
 
 # ─── Resume Parsing ──────────────────────────────────────────────────────────
 pypdf2==3.0.*
