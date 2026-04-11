@@ -15,7 +15,22 @@ if _url.startswith("postgresql://"):
 elif _url.startswith("postgres://"):
     _url = _url.replace("postgres://", "postgresql+asyncpg://", 1)
 
-async_engine = create_async_engine(_url, echo=False, pool_pre_ping=True)
+# When using SQLite (local dev), map PostgreSQL JSONB → JSON
+if "sqlite" in _url:
+    from sqlalchemy.dialects.postgresql import JSONB
+    from sqlalchemy import JSON
+    from sqlalchemy.ext.compiler import compiles
+
+    @compiles(JSONB, "sqlite")
+    def compile_jsonb_sqlite(type_, compiler, **kw):
+        return "JSON"
+
+# Engine kwargs differ between SQLite (tests/dev) and PostgreSQL (production)
+_engine_kwargs: dict = {"echo": False, "pool_pre_ping": True}
+if "sqlite" not in _url:
+    _engine_kwargs.update({"pool_size": 10, "max_overflow": 20})
+
+async_engine = create_async_engine(_url, **_engine_kwargs)
 
 async_session_factory = async_sessionmaker(
     bind=async_engine,

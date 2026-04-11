@@ -32,6 +32,9 @@ async def get_current_user(
         user_id_str: str | None = payload.get("sub")
         if user_id_str is None:
             raise credentials_exc
+        # Ensure token has an expiry claim
+        if "exp" not in payload:
+            raise credentials_exc
         user_id = uuid.UUID(user_id_str)
     except (JWTError, ValueError):
         raise credentials_exc

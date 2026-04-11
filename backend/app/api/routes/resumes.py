@@ -1,13 +1,16 @@
 """Resume upload and status routes."""
 
+import asyncio
 import logging
+import re
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_user
+from app.config import get_settings
 from app.db.session import get_db
 from app.models.candidate import Candidate
 from app.models.job import Job
@@ -21,6 +24,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 ALLOWED_EXTENSIONS = {".pdf", ".docx"}
+
+# Track background pipeline tasks so they aren't garbage-collected
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _sanitize_filename(filename: str) -> str:
+    """Strip path-traversal characters and non-safe characters from filename."""
+    # Take only the final path component (no ../ tricks)
+    import os
+    name = os.path.basename(filename)
+    # Keep only alphanumeric, dash, underscore, dot
+    return re.sub(r"[^\w\-.]", "_", name) or "resume"
 
 
 def _validate_file_type(filename: str) -> None:
@@ -38,14 +53,101 @@ async def _run_pipeline(resume_id: uuid.UUID, job_id: uuid.UUID, file_bytes: byt
     """Background task: run the AI pipeline on the uploaded resume."""
     try:
         from app.agents.orchestrator import PipelineOrchestrator
+        from app.api.routes.ws import manager, make_ws_callback
+        from app.db.neo4j_client import get_neo4j_driver
+        from app.db.qdrant_client import get_qdrant_client
+        from app.db.session import async_session_factory
+        from app.models.enums import PipelineStatus
 
-        orchestrator = PipelineOrchestrator()
-        await orchestrator.run(
+        # Get real clients
+        try:
+            neo4j_driver = get_neo4j_driver()
+        except Exception:
+            neo4j_driver = None
+        try:
+            qdrant_client = get_qdrant_client()
+        except Exception:
+            qdrant_client = None
+
+        ws_callback = make_ws_callback(manager, str(job_id))
+
+        orchestrator = PipelineOrchestrator(
+            on_status_change=ws_callback,
+            neo4j_driver=neo4j_driver,
+            qdrant_client=qdrant_client,
+        )
+        ctx = await orchestrator.run(
             resume_id=str(resume_id),
             job_id=str(job_id),
             file_bytes=file_bytes,
             filename=filename,
         )
+
+        # Persist analysis results and update pipeline status
+        try:
+            async with async_session_factory() as db:
+                from app.models.resume import Resume
+                from app.models.analysis import Analysis
+                from app.models.candidate import Candidate
+                from sqlalchemy import select
+
+                resume = (await db.execute(select(Resume).where(Resume.id == resume_id))).scalar_one_or_none()
+                if resume:
+                    # Always persist resume data that was successfully extracted
+                    if ctx.raw_text:
+                        resume.raw_text = ctx.raw_text
+                    if ctx.parsed_resume:
+                        resume.parsed_json = ctx.parsed_resume
+                        # Update candidate name/email/phone from parsed resume
+                        candidate = (await db.execute(
+                            select(Candidate).where(Candidate.id == resume.candidate_id)
+                        )).scalar_one_or_none()
+                        if candidate:
+                            parsed_name = ctx.parsed_resume.get("name", "").strip()
+                            parsed_email = ctx.parsed_resume.get("email", "").strip()
+                            parsed_phone = ctx.parsed_resume.get("phone", "").strip()
+                            if parsed_name and not candidate.name:
+                                candidate.name = parsed_name
+                            if parsed_email and not candidate.email:
+                                candidate.email = parsed_email
+                            if parsed_phone and not candidate.phone:
+                                candidate.phone = parsed_phone
+                    if ctx.filtered_resume:
+                        resume.anonymized_json = ctx.filtered_resume
+                    if ctx.qdrant_point_id:
+                        resume.embedding_id = ctx.qdrant_point_id
+
+                    # Create Analysis record if scoring produced results
+                    if ctx.analysis:
+                        resume.pipeline_status = PipelineStatus.completed
+                        analysis = Analysis(
+                            resume_id=resume_id,
+                            job_id=job_id,
+                            overall_score=ctx.analysis.get("overall_score"),
+                            skills_score=ctx.analysis.get("skills_score"),
+                            experience_score=ctx.analysis.get("experience_score"),
+                            education_score=ctx.analysis.get("education_score"),
+                            semantic_similarity=ctx.analysis.get("semantic_similarity"),
+                            structural_match=ctx.analysis.get("structural_match"),
+                            explanation=ctx.analysis.get("explanation"),
+                            strengths=ctx.analysis.get("strengths"),
+                            gaps=ctx.analysis.get("gaps"),
+                            graph_paths=ctx.analysis.get("graph_paths"),
+                        )
+                        db.add(analysis)
+                    elif ctx.error:
+                        resume.pipeline_status = PipelineStatus.failed
+                    else:
+                        resume.pipeline_status = PipelineStatus.failed
+
+                    await db.commit()
+        except Exception as persist_err:
+            logger.error("Failed to persist pipeline results for resume %s: %s", resume_id, persist_err)
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+
     except Exception as e:
         logger.error("Pipeline failed for resume %s: %s", resume_id, e)
 
@@ -54,7 +156,6 @@ async def _run_pipeline(resume_id: uuid.UUID, job_id: uuid.UUID, file_bytes: byt
 async def upload_resume(
     job_id: uuid.UUID,
     file: UploadFile,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
     candidate_email: str | None = None,
@@ -63,8 +164,10 @@ async def upload_resume(
     # Validate file type
     _validate_file_type(file.filename or "")
 
-    # Verify job exists
-    job_result = await db.execute(select(Job).where(Job.id == job_id))
+    # Verify job exists AND current user owns it
+    job_result = await db.execute(
+        select(Job).where(Job.id == job_id, Job.created_by == current_user.id)
+    )
     if job_result.scalar_one_or_none() is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
@@ -78,16 +181,26 @@ async def upload_resume(
         db.add(candidate)
         await db.flush()
 
-    # Read file bytes
-    file_bytes = await file.read()
+    # Read file bytes with size limit
+    settings = get_settings()
+    max_size = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+    file_bytes = await file.read(max_size + 1)
+    if len(file_bytes) > max_size:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File too large. Maximum size: {settings.MAX_UPLOAD_SIZE_MB}MB",
+        )
 
-    # Upload to Supabase Storage (best-effort)
-    file_path = f"resumes/{candidate.id}/{file.filename}"
+    # Sanitize filename to prevent path traversal
+    safe_filename = _sanitize_filename(file.filename or "resume")
+
+    # Upload to Supabase Storage (best-effort, run in thread to avoid blocking)
+    file_path = f"resumes/{candidate.id}/{safe_filename}"
     try:
         from app.db.supabase_client import get_supabase
 
         sb = get_supabase()
-        sb.storage.from_("resumes").upload(file_path, file_bytes)
+        await asyncio.to_thread(sb.storage.from_("resumes").upload, file_path, file_bytes)
     except Exception as e:
         logger.warning("Supabase storage upload failed: %s", e)
         # Continue — file_path is still set as the intended path
@@ -103,8 +216,12 @@ async def upload_resume(
     await db.commit()
     await db.refresh(resume)
 
-    # Trigger pipeline in background
-    background_tasks.add_task(_run_pipeline, resume.id, job_id, file_bytes, file.filename or "resume")
+    # Trigger pipeline as a tracked background task
+    task = asyncio.create_task(
+        _run_pipeline(resume.id, job_id, file_bytes, file.filename or "resume")
+    )
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
     return resume
 
@@ -120,3 +237,36 @@ async def get_resume_status(
     if resume is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resume not found")
     return resume
+
+
+@router.delete("/{resume_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_resume(
+    resume_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Delete a resume and its associated analysis and feedback records."""
+    from app.models.analysis import Analysis
+    from app.models.feedback import Feedback
+
+    result = await db.execute(select(Resume).where(Resume.id == resume_id))
+    resume = result.scalar_one_or_none()
+    if resume is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resume not found")
+
+    # Verify the current user owns the job this resume belongs to
+    job_result = await db.execute(
+        select(Job).where(Job.id == resume.job_id, Job.created_by == current_user.id)
+    )
+    if job_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+
+    # Delete related analysis and feedback first
+    await db.execute(select(Analysis).where(Analysis.resume_id == resume_id))
+    if resume.analysis:
+        await db.delete(resume.analysis)
+    for fb in resume.feedback_list:
+        await db.delete(fb)
+
+    await db.delete(resume)
+    await db.commit()

@@ -61,6 +61,12 @@ async def generate_feedback(
             "gaps": analysis.gaps,
             "explanation": analysis.explanation,
         }
+        ctx.match_result = {
+            "matched_skills": analysis.strengths or [],
+            "skill_gaps": analysis.gaps or [],
+            "similar_skills": [],
+            "graph_paths": analysis.graph_paths or [],
+        }
         agent = FeedbackAgent()
         await agent.run(ctx)
         feedback_content = ctx.analysis.get("feedback", feedback_content)

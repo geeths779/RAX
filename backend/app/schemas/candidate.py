@@ -11,7 +11,12 @@ class CandidateResponse(BaseModel):
     name: str | None = None
     email: str | None = None
     phone: str | None = None
+    resume_id: uuid.UUID | None = None
     overall_score: float | None = None
+    skills_score: float | None = None
+    experience_score: float | None = None
+    education_score: float | None = None
+    explanation: str | None = None
     pipeline_status: str | None = None
     created_at: datetime
 

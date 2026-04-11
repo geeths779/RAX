@@ -45,8 +45,8 @@ async def test_login_success(client: AsyncClient):
         "password": "securepass1",
         "full_name": "Login User",
     })
-    resp = await client.post("/api/auth/login", json={
-        "email": "login@example.com",
+    resp = await client.post("/api/auth/login", data={
+        "username": "login@example.com",
         "password": "securepass1",
     })
     assert resp.status_code == 200
@@ -62,8 +62,8 @@ async def test_login_wrong_password(client: AsyncClient):
         "password": "securepass1",
         "full_name": "Wrong Pass",
     })
-    resp = await client.post("/api/auth/login", json={
-        "email": "wrong@example.com",
+    resp = await client.post("/api/auth/login", data={
+        "username": "wrong@example.com",
         "password": "badpassword",
     })
     assert resp.status_code == 401
@@ -71,8 +71,8 @@ async def test_login_wrong_password(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_login_nonexistent_email(client: AsyncClient):
-    resp = await client.post("/api/auth/login", json={
-        "email": "ghost@example.com",
+    resp = await client.post("/api/auth/login", data={
+        "username": "ghost@example.com",
         "password": "whatever",
     })
     assert resp.status_code == 401

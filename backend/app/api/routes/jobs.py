@@ -68,6 +68,8 @@ async def create_job(
         embedding_id = await embed_agent.embed_job(
             job_id=str(job.id),
             description_text=job.description,
+            title=job.title,
+            requirements=job.requirements_raw,
         )
         job.embedding_id = embedding_id
         await db.commit()
@@ -83,7 +85,9 @@ async def get_job(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    result = await db.execute(select(Job).where(Job.id == job_id))
+    result = await db.execute(
+        select(Job).where(Job.id == job_id, Job.created_by == current_user.id)
+    )
     job = result.scalar_one_or_none()
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
@@ -110,3 +114,38 @@ async def update_job(
     await db.commit()
     await db.refresh(job)
     return job
+
+
+@router.delete("/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_job(
+    job_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Delete a job and all associated resumes, analyses, and feedback."""
+    from app.models.resume import Resume
+    from app.models.analysis import Analysis
+    from app.models.feedback import Feedback
+
+    result = await db.execute(
+        select(Job).where(Job.id == job_id, Job.created_by == current_user.id)
+    )
+    job = result.scalar_one_or_none()
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    # Delete child records: feedback → analysis → resumes → job
+    resume_result = await db.execute(select(Resume).where(Resume.job_id == job_id))
+    resumes = list(resume_result.scalars().all())
+    for resume in resumes:
+        await db.execute(
+            select(Feedback).where(Feedback.resume_id == resume.id)
+        )
+        for fb in resume.feedback_list:
+            await db.delete(fb)
+        if resume.analysis:
+            await db.delete(resume.analysis)
+        await db.delete(resume)
+
+    await db.delete(job)
+    await db.commit()

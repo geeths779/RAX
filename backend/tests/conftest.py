@@ -86,8 +86,8 @@ async def register_and_login(client: AsyncClient, email: str = "test@example.com
         "full_name": "Test User",
         "role": role,
     })
-    resp = await client.post("/api/auth/login", json={
-        "email": email,
+    resp = await client.post("/api/auth/login", data={
+        "username": email,
         "password": password,
     })
     token = resp.json()["access_token"]
