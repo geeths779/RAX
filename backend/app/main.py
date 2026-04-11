@@ -3,7 +3,9 @@ import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -121,6 +123,13 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(RequestLoggingMiddleware)
 
+
+# ── Validation Error Logging ──
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    logger.error("Validation error on %s %s: %s", request.method, request.url.path, exc.errors())
+    return JSONResponse(status_code=422, content={"detail": exc.errors()})
+
 # ── Router Registration ──
 from app.api.routes import auth, jobs, resumes, candidates, analysis, feedback  # noqa: E402
 from app.api.routes import ws  # noqa: E402
@@ -132,6 +141,11 @@ app.include_router(candidates.router, prefix="/api",            tags=["Candidate
 app.include_router(analysis.router,   prefix="/api",            tags=["Analysis"])
 app.include_router(feedback.router,   prefix="/api/feedback",   tags=["Feedback"])
 app.include_router(ws.router,         tags=["WebSocket"])
+
+
+@app.get("/")
+async def root():
+    return {"name": "RAX API", "status": "ok"}
 
 
 @app.get("/health")
