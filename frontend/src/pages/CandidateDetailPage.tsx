@@ -6,7 +6,7 @@ import ScoreRadarChart from '@/components/RadarChart';
 import ScoreCard from '@/components/ScoreCard';
 
 export default function CandidateDetailPage() {
-  const { jobId, resumeId } = useParams<{ jobId: string; resumeId: string }>();
+  const { resumeId } = useParams<{ jobId: string; resumeId: string }>();
   const { data: analysis, loading } = useCachedFetch<Analysis>(
     resumeId ? `analysis:${resumeId}` : null,
     () => getAnalysis(resumeId!),
