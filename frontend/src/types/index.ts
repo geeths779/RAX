@@ -114,3 +114,28 @@ export interface WsStageEvent {
   status: 'in_progress' | 'complete' | 'failed';
   timestamp: string;
 }
+
+// ── Bulk Notify ──
+
+export interface BulkDecision {
+  candidate_id: string;
+  type: 'shortlisted' | 'rejected';
+}
+
+export interface BulkNotifyResult {
+  candidate_id: string;
+  name: string | null;
+  email: string | null;
+  type: string;
+  status: 'sent' | 'skipped' | 'failed';
+  reason?: string | null;
+}
+
+export interface BulkNotifyResponse {
+  total: number;
+  sent: number;
+  skipped_no_email: number;
+  skipped_already_notified: number;
+  failed: number;
+  results: BulkNotifyResult[];
+}

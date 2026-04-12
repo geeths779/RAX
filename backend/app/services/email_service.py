@@ -1,4 +1,13 @@
-"""Email notification service using Gmail SMTP."""
+"""Email notification service.
+
+Primary:  Resend HTTP API (port 443 — works everywhere including Render)
+Fallback: Gmail SMTP (port 587 — works locally, blocked on Render)
+
+Selection logic:
+  - If RESEND_API_KEY is set → use Resend
+  - Else if SMTP_PASSWORD is set → use Gmail SMTP
+  - Else → raise error
+"""
 
 import asyncio
 import logging
@@ -6,15 +15,60 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
+import httpx
+
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
+RESEND_API_URL = "https://api.resend.com/emails"
 
-def _send_smtp(to: str, subject: str, html_body: str) -> None:
+
+# ─────────────────────────────────────────────────────────────────────────────
+async def _send_via_resend(to: str, subject: str, html_body: str) -> dict:
+    settings = get_settings()
+    payload = {
+        "from": settings.EMAIL_FROM,
+        "to": [to],
+        "subject": subject,
+        "html": html_body,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                RESEND_API_URL,
+                json=payload,
+                headers={"Authorization": f"Bearer {settings.RESEND_API_KEY}"},
+            )
+    except (httpx.ConnectError, httpx.TimeoutException) as e:
+        logger.error("Resend API connection error: %s", e)
+        raise RuntimeError(f"Cannot reach email service: {e}")
+
+    if resp.status_code == 403:
+        body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+        msg = body.get("message", resp.text)
+        if "testing emails" in msg:
+            logger.error("Resend domain not verified — can only send to account owner")
+            raise RuntimeError(
+                "Email domain not verified. Verify a domain at resend.com/domains "
+                "to send emails to candidates, or send test emails to the account owner only."
+            )
+        raise RuntimeError(f"Email delivery forbidden: {msg}")
+
+    if resp.status_code >= 400:
+        logger.error("Resend API error %d: %s", resp.status_code, resp.text)
+        raise RuntimeError(f"Email delivery failed ({resp.status_code}): {resp.text}")
+
+    data = resp.json()
+    logger.info("Email sent to %s via Resend — id=%s", to, data.get("id"))
+    return data
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+def _send_smtp_blocking(to: str, subject: str, html_body: str) -> None:
     """Blocking SMTP send — called via asyncio.to_thread."""
     settings = get_settings()
-
     msg = MIMEMultipart("alternative")
     msg["From"] = settings.EMAIL_FROM
     msg["To"] = to
@@ -27,31 +81,43 @@ def _send_smtp(to: str, subject: str, html_body: str) -> None:
         server.sendmail(settings.EMAIL_FROM, [to], msg.as_string())
 
 
-async def send_email(
-    to: str,
-    subject: str,
-    html_body: str,
-) -> dict:
-    """Send an email via Gmail SMTP. Runs the blocking call in a thread."""
+async def _send_via_smtp(to: str, subject: str, html_body: str) -> dict:
     settings = get_settings()
-
-    if not settings.SMTP_PASSWORD:
-        logger.error("SMTP_PASSWORD not set — skipping email to %s", to)
-        raise RuntimeError("Email service not configured (SMTP_PASSWORD missing)")
-
     try:
-        await asyncio.to_thread(_send_smtp, to, subject, html_body)
+        await asyncio.to_thread(_send_smtp_blocking, to, subject, html_body)
     except smtplib.SMTPAuthenticationError as e:
         logger.error("SMTP auth failed: %s", e)
-        raise RuntimeError(
-            "Gmail authentication failed. Check SMTP_USER and SMTP_PASSWORD (App Password)."
-        )
+        raise RuntimeError("Gmail authentication failed. Check SMTP_USER and SMTP_PASSWORD.")
+    except OSError as e:
+        logger.error("SMTP connection error: %s", e)
+        raise RuntimeError(f"SMTP connection failed: {e}")
     except smtplib.SMTPException as e:
         logger.error("SMTP error sending to %s: %s", to, e)
         raise RuntimeError(f"Email delivery failed: {e}")
 
     logger.info("Email sent to %s via Gmail SMTP", to)
     return {"to": to, "status": "sent"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+async def send_email(
+    to: str,
+    subject: str,
+    html_body: str,
+) -> dict:
+    """Send email — Resend (primary) with SMTP fallback."""
+    settings = get_settings()
+
+    if settings.RESEND_API_KEY:
+        return await _send_via_resend(to, subject, html_body)
+
+    if settings.SMTP_PASSWORD:
+        return await _send_via_smtp(to, subject, html_body)
+
+    logger.error("No email provider configured — set RESEND_API_KEY or SMTP_PASSWORD")
+    raise RuntimeError(
+        "Email service not configured. Set RESEND_API_KEY (production) or SMTP_PASSWORD (local)."
+    )
 
 
 def build_shortlisted_email(

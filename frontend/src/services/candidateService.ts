@@ -1,5 +1,5 @@
 import api from './api';
-import type { CandidateListResponse, Analysis } from '@/types';
+import type { CandidateListResponse, Analysis, BulkDecision, BulkNotifyResponse } from '@/types';
 
 export async function getCandidates(
   jobId: string,
@@ -30,6 +30,16 @@ export async function notifyCandidate(
   const { data } = await api.post(`/candidates/${candidateId}/notify`, {
     type,
     custom_message: customMessage,
+  });
+  return data;
+}
+
+export async function notifyAllCandidates(
+  jobId: string,
+  decisions: BulkDecision[],
+): Promise<BulkNotifyResponse> {
+  const { data } = await api.post<BulkNotifyResponse>(`/jobs/${jobId}/notify-all`, {
+    decisions,
   });
   return data;
 }

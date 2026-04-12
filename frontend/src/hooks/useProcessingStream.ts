@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { WsStageEvent } from '@/types';
 
 interface StageStatus {
@@ -13,41 +13,39 @@ interface UseProcessingStreamReturn {
   error: string | null;
 }
 
+/**
+ * SSE-based hook for real-time pipeline status updates.
+ * Uses EventSource which provides automatic reconnection.
+ */
 export function useProcessingStream(jobId: string | null): UseProcessingStreamReturn {
   const [statuses, setStatuses] = useState<Map<string, StageStatus>>(new Map());
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
-  const retriesRef = useRef(0);
-  const MAX_RETRIES = 3;
+  const esRef = useRef<EventSource | null>(null);
 
-  const connect = useCallback(() => {
+  useEffect(() => {
     if (!jobId) return;
 
     const token = localStorage.getItem('rax_token') || '';
     const apiUrl = import.meta.env.VITE_API_URL;
     let url: string;
     if (apiUrl) {
-      // Production: connect WS to the backend host
-      const wsBase = apiUrl.replace(/^http/, 'ws');
-      url = `${wsBase}/ws/pipeline/${jobId}?token=${token}`;
+      // Production: connect directly to backend host
+      url = `${apiUrl}/api/pipeline/${jobId}/events?token=${encodeURIComponent(token)}`;
     } else {
       // Dev: same host via Vite proxy
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const host = window.location.host;
-      url = `${protocol}//${host}/ws/pipeline/${jobId}?token=${token}`;
+      url = `/api/pipeline/${jobId}/events?token=${encodeURIComponent(token)}`;
     }
 
-    const ws = new WebSocket(url);
-    wsRef.current = ws;
+    const es = new EventSource(url);
+    esRef.current = es;
 
-    ws.onopen = () => {
+    es.onopen = () => {
       setIsConnected(true);
       setError(null);
-      retriesRef.current = 0;
     };
 
-    ws.onmessage = (event) => {
+    es.onmessage = (event) => {
       try {
         const data: WsStageEvent = JSON.parse(event.data);
         setStatuses((prev) => {
@@ -60,30 +58,21 @@ export function useProcessingStream(jobId: string | null): UseProcessingStreamRe
           return next;
         });
       } catch {
-        // Ignore non-JSON messages like pong
+        // Ignore non-JSON (keepalive comments are filtered by EventSource)
       }
     };
 
-    ws.onclose = () => {
+    es.onerror = () => {
       setIsConnected(false);
-      if (retriesRef.current < MAX_RETRIES) {
-        retriesRef.current++;
-        const delay = Math.min(1000 * 2 ** retriesRef.current, 8000);
-        setTimeout(connect, delay);
-      }
+      // EventSource auto-reconnects — just flag the transient error
+      setError('Connection interrupted — reconnecting…');
     };
 
-    ws.onerror = () => {
-      setError('WebSocket connection error');
+    return () => {
+      es.close();
+      esRef.current = null;
     };
   }, [jobId]);
-
-  useEffect(() => {
-    connect();
-    return () => {
-      wsRef.current?.close();
-    };
-  }, [connect]);
 
   return { statuses, isConnected, error };
 }

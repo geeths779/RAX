@@ -7,7 +7,7 @@ interface ConfirmDialogProps {
   message: string;
   confirmLabel?: string;
   cancelLabel?: string;
-  variant?: 'danger' | 'default';
+  variant?: 'danger' | 'default' | 'primary';
   loading?: boolean;
   onConfirm: () => void;
   onCancel: () => void;

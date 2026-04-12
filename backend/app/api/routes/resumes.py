@@ -76,7 +76,7 @@ async def _run_pipeline_inner(resume_id: uuid.UUID, job_id: uuid.UUID, file_byte
     """Actual pipeline logic (called under the semaphore)."""
     try:
         from app.agents.orchestrator import PipelineOrchestrator
-        from app.api.routes.ws import manager, make_ws_callback
+        from app.api.routes.sse import make_sse_callback
         from app.db.neo4j_client import get_neo4j_driver
         from app.db.qdrant_client import get_qdrant_client
         from app.db.session import async_session_factory
@@ -92,10 +92,10 @@ async def _run_pipeline_inner(resume_id: uuid.UUID, job_id: uuid.UUID, file_byte
         except Exception:
             qdrant_client = None
 
-        ws_callback = make_ws_callback(manager, str(job_id))
+        sse_callback = make_sse_callback(str(job_id))
 
         orchestrator = PipelineOrchestrator(
-            on_status_change=ws_callback,
+            on_status_change=sse_callback,
             neo4j_driver=neo4j_driver,
             qdrant_client=qdrant_client,
         )
@@ -311,6 +311,7 @@ async def upload_resumes_batch(
             pipeline_status=PipelineStatus.uploaded,
         )
         db.add(resume)
+        await db.flush()
         pipeline_args.append((resume.id, job_id, file_bytes, file.filename or "resume"))
         results.append(resume)
 

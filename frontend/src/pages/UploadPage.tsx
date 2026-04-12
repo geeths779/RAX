@@ -15,8 +15,10 @@ export default function UploadPage() {
   const [error, setError] = useState('');
   const { toast } = useToast();
 
-  // Only connect WS after upload
-  const { statuses } = useProcessingStream(uploadedIds.length > 0 ? (jobId ?? null) : null);
+  // Connect SSE as soon as we have a jobId — BEFORE upload starts.
+  // This eliminates the race condition where pipeline events fire
+  // before the client is listening. SSE is lightweight when idle.
+  const { statuses } = useProcessingStream(jobId ?? null);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -60,12 +62,16 @@ export default function UploadPage() {
     }
   };
 
-  // Check if all resumes are done processing
+  // Check if all resumes are done processing (success OR any stage failed)
   const allComplete = uploadedIds.length > 0 && uploadedIds.every(({ resumeId }) => {
-    const completedKey = `${resumeId}:completed`;
-    const failedKey = `${resumeId}:scoring`;
-    const ev = statuses.get(completedKey) || statuses.get(failedKey);
-    return ev?.status === 'complete' || ev?.status === 'failed';
+    // Success: the orchestrator sends "completed:complete" at the very end
+    const completed = statuses.get(`${resumeId}:completed`);
+    if (completed?.status === 'complete') return true;
+    // Failure: any stage with status "failed" means the pipeline stopped early
+    for (const [key, val] of statuses) {
+      if (key.startsWith(`${resumeId}:`) && val.status === 'failed') return true;
+    }
+    return false;
   });
 
   return (

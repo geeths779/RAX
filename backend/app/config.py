@@ -35,12 +35,15 @@ class Settings(BaseSettings):
     # ── Upload limits ──
     MAX_UPLOAD_SIZE_MB: int = 10
 
-    # ── Email (Gmail SMTP) ──
+    # ── Email ──
+    # Primary: Resend HTTP API (works on Render/cloud)
+    RESEND_API_KEY: str = ""
+    EMAIL_FROM: str = "RAX <onboarding@resend.dev>"
+    # Fallback: Gmail SMTP (works locally, blocked on Render)
     SMTP_HOST: str = "smtp.gmail.com"
     SMTP_PORT: int = 587
     SMTP_USER: str = ""
-    SMTP_PASSWORD: str = ""  # Gmail App Password (16 chars)
-    EMAIL_FROM: str = ""
+    SMTP_PASSWORD: str = ""
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
