@@ -1,29 +1,37 @@
-"""Stage 2: Anonymize parsed resume — remove name, gender, institution, nationality signals."""
+"""Stage 2: Anonymize parsed resume — deterministic (no LLM).
+
+Removes name, gender signals, institution names, and nationality/age indicators
+via direct field manipulation. Much faster than an LLM call (~0ms vs ~5-15s).
+"""
 
 from __future__ import annotations
 
-import json
+import copy
 import logging
+import re
 
 from app.agents.base_agent import BaseAgent
 from app.agents.pipeline_context import PipelineContext
 
 logger = logging.getLogger(__name__)
 
-BIAS_FILTER_PROMPT = """You are a bias-removal agent. Given the following parsed resume JSON, return a new JSON with these anonymizations applied:
+# Patterns to strip from free-text description fields
+_PRONOUN_RE = re.compile(
+    r"\b(he|she|him|her|his|hers|himself|herself|mr\.|ms\.|mrs\.)\b",
+    re.IGNORECASE,
+)
+_NATIONALITY_RE = re.compile(
+    r"\b(nationality|citizenship|citizen of|native of|born in)\b[^.;,\n]*",
+    re.IGNORECASE,
+)
 
-1. Replace the "name" field with "[CANDIDATE_ID]"
-2. Replace every "institution" value with "[UNIVERSITY]"
-3. Remove any gender indicators (he/she/him/her pronouns, gendered titles like Mr./Ms./Mrs.)
-4. Remove any nationality or ethnicity indicators
-5. Remove any age indicators (date of birth, graduation year that reveals age)
-6. Keep ALL skills, experience details, and education degree/field intact — only remove identity signals
 
-Return ONLY valid JSON (no markdown fences). Preserve the exact same schema as the input.
-
-Input JSON:
-{resume_json}
-"""
+def _clean_text(text: str) -> str:
+    """Remove gender pronouns and nationality phrases from free text."""
+    text = _PRONOUN_RE.sub("", text)
+    text = _NATIONALITY_RE.sub("", text)
+    # Collapse multiple spaces
+    return re.sub(r"  +", " ", text).strip()
 
 
 class BiasFilterAgent(BaseAgent):
@@ -31,24 +39,40 @@ class BiasFilterAgent(BaseAgent):
 
     async def run(self, ctx: PipelineContext) -> PipelineContext:
         ctx.current_stage = "filtering"
-        logger.info("BiasFilterAgent: anonymizing resume %s", ctx.resume_id)
+        logger.info("BiasFilterAgent: anonymizing resume %s (deterministic)", ctx.resume_id)
 
         if not ctx.parsed_resume:
             ctx.error = "No parsed resume available for bias filtering"
             return ctx
 
-        prompt = BIAS_FILTER_PROMPT.format(
-            resume_json=json.dumps(ctx.parsed_resume, indent=2)
-        )
+        filtered = copy.deepcopy(ctx.parsed_resume)
 
-        try:
-            text = await self.call_llm(prompt)
-            ctx.filtered_resume = json.loads(text)
-        except (json.JSONDecodeError, IndexError) as exc:
-            logger.error("BiasFilterAgent: failed to parse response: %s", exc)
-            ctx.error = f"Bias filtering failed: {exc}"
-        except RuntimeError as exc:
-            logger.error("BiasFilterAgent: Gemini call failed: %s", exc)
-            ctx.error = str(exc)
+        # 1. Anonymize identity fields
+        filtered["name"] = "[CANDIDATE_ID]"
+        filtered.pop("email", None)
+        filtered.pop("phone", None)
+        filtered.pop("date_of_birth", None)
+        filtered.pop("dob", None)
+        filtered.pop("age", None)
+        filtered.pop("gender", None)
+        filtered.pop("nationality", None)
+        filtered.pop("address", None)
+        filtered.pop("photo", None)
 
+        # 2. Anonymize institution names in education entries
+        for edu in filtered.get("education", []):
+            if "institution" in edu:
+                edu["institution"] = "[UNIVERSITY]"
+            if "school" in edu:
+                edu["school"] = "[UNIVERSITY]"
+
+        # 3. Clean free-text descriptions (remove pronouns, nationality signals)
+        for exp in filtered.get("experience", []):
+            if "description" in exp and isinstance(exp["description"], str):
+                exp["description"] = _clean_text(exp["description"])
+
+        if "summary" in filtered and isinstance(filtered["summary"], str):
+            filtered["summary"] = _clean_text(filtered["summary"])
+
+        ctx.filtered_resume = filtered
         return ctx

@@ -15,14 +15,22 @@ _client: Optional[Client] = None
 
 
 def init_supabase_client() -> Client:
-    """Create the singleton Supabase client. Call at app startup."""
+    """Create the singleton Supabase client. Call at app startup.
+
+    Uses the service_role key (bypasses RLS) when available,
+    falling back to the anon key otherwise.
+    """
     global _client
     if _client is not None:
         return _client
 
     settings = get_settings()
-    _client = create_client(settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY)
-    logger.info("Supabase client initialised → %s", settings.SUPABASE_URL)
+    key = settings.SUPABASE_SERVICE_ROLE_KEY or settings.SUPABASE_ANON_KEY
+    if settings.SUPABASE_SERVICE_ROLE_KEY:
+        logger.info("Supabase client initialised with service_role key → %s", settings.SUPABASE_URL)
+    else:
+        logger.warning("Supabase client using anon key — storage uploads may fail due to RLS. Set SUPABASE_SERVICE_ROLE_KEY.")
+    _client = create_client(settings.SUPABASE_URL, key)
     return _client
 
 

@@ -68,7 +68,9 @@ class PipelineOrchestrator:
         file_bytes: bytes = b"",
         filename: str = "",
     ) -> PipelineContext:
-        """Execute the full pipeline: Parse → Filter → [Graph ║ Embed] → Match → Score."""
+        """Execute the optimized pipeline:
+        Parse → Bias Filter (instant) → [ExpExtract ║ Graph ║ Embed] → Match → Score.
+        """
 
         ctx = PipelineContext(
             resume_id=resume_id,
@@ -103,17 +105,7 @@ class PipelineOrchestrator:
             return ctx
         await self._notify(resume_id, "parsing", "complete")
 
-        # Stage 1b: Experience Extraction (LLM judge — non-fatal)
-        try:
-            ctx = await self._experience_extractor.run(ctx)
-            if ctx.enriched_experience:
-                logger.info("ExperienceExtractor: total_years=%.1f seniority=%s",
-                            ctx.enriched_experience.get("total_years_experience", 0),
-                            ctx.enriched_experience.get("seniority_level", "unknown"))
-        except Exception as exc:
-            logger.warning("ExperienceExtractor failed (non-fatal): %s", exc)
-
-        # Stage 2: Bias Filter
+        # Stage 2: Bias Filter (deterministic — instant, no LLM call)
         await self._notify(resume_id, "filtering", "in_progress")
         ctx = await self._bias_filter.run(ctx)
         if ctx.error:
@@ -121,20 +113,25 @@ class PipelineOrchestrator:
             return ctx
         await self._notify(resume_id, "filtering", "complete")
 
-        # Stage 3a + 3b: Graph Ingestion ║ Embedding (parallel, on separate copies)
-        # These are enhancement stages — failures are logged but do NOT block the pipeline.
+        # Stage 3: Experience Extract ║ Graph Ingestion ║ Embedding (all in parallel)
+        # Experience extract: LLM call using raw_text (independent of filtered_resume)
+        # Graph ingestion: writes to Neo4j from parsed_resume
+        # Embedding: generates vector from filtered_resume
+        # All three are independent — run concurrently for maximum speed.
         await self._notify(resume_id, "graph_ingestion", "in_progress")
         await self._notify(resume_id, "embedding", "in_progress")
 
         graph_ctx = copy.copy(ctx)
         embed_ctx = copy.copy(ctx)
+        exp_ctx = copy.copy(ctx)
 
         graph_task = asyncio.create_task(self._graph_ingestion.run(graph_ctx))
         embed_task = asyncio.create_task(self._embedding.run(embed_ctx))
+        exp_task = asyncio.create_task(self._experience_extractor.run(exp_ctx))
 
-        results = await asyncio.gather(graph_task, embed_task, return_exceptions=True)
+        results = await asyncio.gather(graph_task, embed_task, exp_task, return_exceptions=True)
 
-        # Merge parallel results — treat failures as warnings, not fatal errors
+        # Merge Graph result
         if isinstance(results[0], BaseException):
             logger.warning("Graph ingestion crashed: %s", results[0])
             await self._notify(resume_id, "graph_ingestion", "failed")
@@ -147,6 +144,7 @@ class PipelineOrchestrator:
             else:
                 await self._notify(resume_id, "graph_ingestion", "complete")
 
+        # Merge Embedding result
         if isinstance(results[1], BaseException):
             logger.warning("Embedding crashed: %s", results[1])
             await self._notify(resume_id, "embedding", "failed")
@@ -158,6 +156,17 @@ class PipelineOrchestrator:
                 await self._notify(resume_id, "embedding", "failed")
             else:
                 await self._notify(resume_id, "embedding", "complete")
+
+        # Merge Experience Extraction result (non-fatal)
+        if isinstance(results[2], BaseException):
+            logger.warning("ExperienceExtractor crashed (non-fatal): %s", results[2])
+        else:
+            exp_ctx = results[2]
+            if exp_ctx.enriched_experience:
+                ctx.enriched_experience = exp_ctx.enriched_experience
+                logger.info("ExperienceExtractor: total_years=%.1f seniority=%s",
+                            ctx.enriched_experience.get("total_years_experience", 0),
+                            ctx.enriched_experience.get("seniority_level", "unknown"))
 
         # Stage 4: Hybrid Matching (best-effort — skip if graph/vector data is missing)
         await self._notify(resume_id, "hybrid_matching", "in_progress")

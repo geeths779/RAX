@@ -20,6 +20,18 @@ _genai_client: genai.Client | None = None
 # Timeout (seconds) applied to every Gemini API call
 GEMINI_TIMEOUT = 90
 
+# Limit concurrent Gemini API calls to avoid rate-limit errors
+# when processing multiple resumes in parallel.
+_LLM_SEMAPHORE: asyncio.Semaphore | None = None
+_LLM_CONCURRENCY = 3  # max simultaneous Gemini calls
+
+
+def _get_llm_semaphore() -> asyncio.Semaphore:
+    global _LLM_SEMAPHORE
+    if _LLM_SEMAPHORE is None:
+        _LLM_SEMAPHORE = asyncio.Semaphore(_LLM_CONCURRENCY)
+    return _LLM_SEMAPHORE
+
 
 def _get_genai_client() -> genai.Client:
     """Return the singleton google-genai Client, creating it lazily."""
@@ -47,16 +59,18 @@ class BaseAgent(abc.ABC):
 
     @classmethod
     async def call_llm(cls, prompt: str) -> str:
-        """Call Gemini with a timeout. Returns stripped text or raises on failure."""
+        """Call Gemini with a timeout and concurrency limit."""
         client = _get_genai_client()
-        try:
-            async with asyncio.timeout(GEMINI_TIMEOUT):
-                response = await client.aio.models.generate_content(
-                    model=cls._model_name,
-                    contents=prompt,
-                )
-        except TimeoutError:
-            raise RuntimeError(f"Gemini API call timed out after {GEMINI_TIMEOUT}s")
+        sem = _get_llm_semaphore()
+        async with sem:
+            try:
+                async with asyncio.timeout(GEMINI_TIMEOUT):
+                    response = await client.aio.models.generate_content(
+                        model=cls._model_name,
+                        contents=prompt,
+                    )
+            except TimeoutError:
+                raise RuntimeError(f"Gemini API call timed out after {GEMINI_TIMEOUT}s")
 
         text = (response.text or "").strip()
         if not text:
@@ -67,15 +81,17 @@ class BaseAgent(abc.ABC):
     async def embed_text(cls, text: str) -> list[float]:
         """Generate a 768-dim embedding using Gemini embedding model."""
         client = _get_genai_client()
-        try:
-            async with asyncio.timeout(GEMINI_TIMEOUT):
-                result = await client.aio.models.embed_content(
-                    model=cls._embedding_model_name,
-                    contents=text,
-                    config=types.EmbedContentConfig(output_dimensionality=768),
-                )
-        except TimeoutError:
-            raise RuntimeError(f"Gemini embed_content timed out after {GEMINI_TIMEOUT}s")
+        sem = _get_llm_semaphore()
+        async with sem:
+            try:
+                async with asyncio.timeout(GEMINI_TIMEOUT):
+                    result = await client.aio.models.embed_content(
+                        model=cls._embedding_model_name,
+                        contents=text,
+                        config=types.EmbedContentConfig(output_dimensionality=768),
+                    )
+            except TimeoutError:
+                raise RuntimeError(f"Gemini embed_content timed out after {GEMINI_TIMEOUT}s")
         return result.embeddings[0].values
 
     @abc.abstractmethod

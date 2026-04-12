@@ -28,6 +28,18 @@ ALLOWED_EXTENSIONS = {".pdf", ".docx"}
 # Track background pipeline tasks so they aren't garbage-collected
 _background_tasks: set[asyncio.Task] = set()
 
+# Limit how many pipelines can run concurrently (each pipeline has
+# 2 LLM calls + vector/graph I/O, so 3 is a safe default).
+_PIPELINE_CONCURRENCY = 3
+_pipeline_semaphore: asyncio.Semaphore | None = None
+
+
+def _get_pipeline_semaphore() -> asyncio.Semaphore:
+    global _pipeline_semaphore
+    if _pipeline_semaphore is None:
+        _pipeline_semaphore = asyncio.Semaphore(_PIPELINE_CONCURRENCY)
+    return _pipeline_semaphore
+
 
 def _sanitize_filename(filename: str) -> str:
     """Strip path-traversal characters and non-safe characters from filename."""
@@ -50,7 +62,18 @@ def _validate_file_type(filename: str) -> None:
 
 
 async def _run_pipeline(resume_id: uuid.UUID, job_id: uuid.UUID, file_bytes: bytes, filename: str) -> None:
-    """Background task: run the AI pipeline on the uploaded resume."""
+    """Background task: run the AI pipeline on the uploaded resume.
+
+    Guarded by _pipeline_semaphore so that only N pipelines run at once.
+    Extra pipelines queue and start as slots free up.
+    """
+    sem = _get_pipeline_semaphore()
+    async with sem:
+        await _run_pipeline_inner(resume_id, job_id, file_bytes, filename)
+
+
+async def _run_pipeline_inner(resume_id: uuid.UUID, job_id: uuid.UUID, file_bytes: bytes, filename: str) -> None:
+    """Actual pipeline logic (called under the semaphore)."""
     try:
         from app.agents.orchestrator import PipelineOrchestrator
         from app.api.routes.ws import manager, make_ws_callback
@@ -224,6 +247,86 @@ async def upload_resume(
     task.add_done_callback(_background_tasks.discard)
 
     return resume
+
+
+@router.post("/upload/batch", response_model=list[ResumeUploadResponse], status_code=status.HTTP_201_CREATED)
+async def upload_resumes_batch(
+    job_id: uuid.UUID,
+    files: list[UploadFile],
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Accept multiple files at once.  All DB inserts happen first, then all
+    pipelines are kicked off concurrently as background tasks."""
+
+    if not files:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No files provided")
+
+    if len(files) > 20:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Maximum 20 files per batch")
+
+    for f in files:
+        _validate_file_type(f.filename or "")
+
+    # Verify job ownership once
+    job_result = await db.execute(
+        select(Job).where(Job.id == job_id, Job.created_by == current_user.id)
+    )
+    if job_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    settings = get_settings()
+    max_size = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+
+    results: list[Resume] = []
+    pipeline_args: list[tuple[uuid.UUID, uuid.UUID, bytes, str]] = []
+
+    for file in files:
+        file_bytes = await file.read(max_size + 1)
+        if len(file_bytes) > max_size:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"File '{file.filename}' too large. Maximum: {settings.MAX_UPLOAD_SIZE_MB}MB",
+            )
+
+        candidate = Candidate()
+        db.add(candidate)
+        await db.flush()
+
+        safe_filename = _sanitize_filename(file.filename or "resume")
+        file_path = f"resumes/{candidate.id}/{safe_filename}"
+
+        # Best-effort Supabase upload
+        try:
+            from app.db.supabase_client import get_supabase
+            sb = get_supabase()
+            await asyncio.to_thread(sb.storage.from_("resumes").upload, file_path, file_bytes)
+        except Exception as e:
+            logger.warning("Supabase storage upload failed for %s: %s", safe_filename, e)
+
+        resume = Resume(
+            candidate_id=candidate.id,
+            job_id=job_id,
+            file_path=file_path,
+            pipeline_status=PipelineStatus.uploaded,
+        )
+        db.add(resume)
+        pipeline_args.append((resume.id, job_id, file_bytes, file.filename or "resume"))
+        results.append(resume)
+
+    await db.commit()
+    for r in results:
+        await db.refresh(r)
+
+    # Fire all pipelines concurrently — the semaphore in _run_pipeline
+    # limits how many actually execute at once.
+    for rid, jid, fbytes, fname in pipeline_args:
+        task = asyncio.create_task(_run_pipeline(rid, jid, fbytes, fname))
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
+
+    logger.info("Batch upload: %d resumes queued for job %s", len(results), job_id)
+    return results
 
 
 @router.get("/{resume_id}/status", response_model=ResumeStatusResponse)

@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str
     SUPABASE_URL: str
     SUPABASE_ANON_KEY: str
+    SUPABASE_SERVICE_ROLE_KEY: str = ""
 
     # ── Neo4j ──
     NEO4J_URI: str = "bolt://localhost:7687"

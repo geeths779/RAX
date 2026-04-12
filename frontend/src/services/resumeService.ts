@@ -5,18 +5,20 @@ export async function uploadResumes(
   files: File[],
   jobId: string
 ): Promise<ResumeUploadResponse[]> {
-  const results: ResumeUploadResponse[] = [];
+  // Single batch request — all files in one multipart POST
+  const form = new FormData();
   for (const file of files) {
-    const form = new FormData();
-    form.append('file', file);
-    form.append('job_id', jobId);
-    const { data } = await api.post<ResumeUploadResponse>('/resumes/upload', form, {
+    form.append('files', file);
+  }
+  const { data } = await api.post<ResumeUploadResponse[]>(
+    '/resumes/upload/batch',
+    form,
+    {
       headers: { 'Content-Type': 'multipart/form-data' },
       params: { job_id: jobId },
-    });
-    results.push(data);
-  }
-  return results;
+    },
+  );
+  return data;
 }
 
 export async function getResumeStatus(resumeId: string): Promise<ResumeStatus> {
