@@ -26,7 +26,7 @@ export async function notifyCandidate(
   candidateId: string,
   type: 'shortlisted' | 'rejected',
   customMessage?: string
-): Promise<{ status: string; email: string }> {
+): Promise<{ status: string; message: string; email_sent_to: string }> {
   const { data } = await api.post(`/candidates/${candidateId}/notify`, {
     type,
     custom_message: customMessage,

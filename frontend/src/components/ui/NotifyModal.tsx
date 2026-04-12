@@ -25,10 +25,13 @@ export default function NotifyModal({
     setSending(true);
     try {
       await onSend(type, customMessage || undefined);
-    } finally {
-      setSending(false);
+      // Only reset on success — parent closes the modal
       setCustomMessage('');
       setType('shortlisted');
+    } catch {
+      // Error is handled by parent (toast) — just stop spinner
+    } finally {
+      setSending(false);
     }
   };
 

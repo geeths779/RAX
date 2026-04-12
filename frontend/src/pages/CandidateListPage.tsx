@@ -51,13 +51,24 @@ export default function CandidateListPage() {
   const handleNotify = async (type: 'shortlisted' | 'rejected', customMessage?: string) => {
     if (!notifyTarget) return;
     try {
-      await notifyCandidate(notifyTarget.id, type, customMessage);
-      toast('success', `Email sent to ${notifyTarget.email}`);
+      const res = await notifyCandidate(notifyTarget.id, type, customMessage);
+      toast('success', res.message || `Email sent to ${res.email_sent_to}`);
       clearCache(`candidates:${jobId}`);
       setNotifyTarget(null);
       refetch();
-    } catch {
-      toast('error', 'Failed to send notification email.');
+    } catch (err: unknown) {
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      if (detail?.includes('not configured')) {
+        toast('error', 'Email service is not configured. Set RESEND_API_KEY on the server.');
+      } else if (detail?.includes('no email')) {
+        toast('error', 'This candidate has no email address on file.');
+      } else if (detail?.includes('delivery failed')) {
+        toast('error', `Email delivery failed: ${detail}`);
+      } else {
+        toast('error', detail || 'Failed to send notification email. Please try again.');
+      }
+      setNotifyTarget(null);
     }
   };
 
